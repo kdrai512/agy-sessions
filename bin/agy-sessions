@@ -122,6 +122,23 @@ def parse_timestamp(val: Any) -> Optional[dt.datetime]:
         return None
 
 
+def ask_input(prompt_text: str) -> str:
+    """Read input from user safely, falling back to /dev/tty if stdin was redirected."""
+    try:
+        if sys.stdin.isatty():
+            return input(prompt_text)
+        with open("/dev/tty", "r") as tty_in:
+            sys.stdout.write(prompt_text)
+            sys.stdout.flush()
+            line = tty_in.readline()
+            return line.strip() if line else ""
+    except Exception:
+        try:
+            return input(prompt_text)
+        except Exception:
+            return ""
+
+
 @dataclass
 class Session:
     conversation_id: str
@@ -688,17 +705,23 @@ class InteractivePicker:
         except KeyboardInterrupt:
             sys.exit(0)
 
-        if proc.returncode != 0 or not stdout.strip():
+        if proc.returncode != 0 or not stdout:
             # Cancelled or ESC pressed
             sys.exit(0)
 
-        output_lines = stdout.strip().splitlines()
+        output_lines = stdout.splitlines()
         if not output_lines:
             sys.exit(0)
 
-        # First line is key pressed (or empty for enter)
-        key_pressed = output_lines[0].strip()
-        selected_line = output_lines[1].strip() if len(output_lines) > 1 else ""
+        # When --expect is used, fzf prints:
+        # Line 0: The key pressed (empty if default Enter was pressed)
+        # Line 1: The selected item
+        if len(output_lines) >= 2:
+            key_pressed = output_lines[0].strip()
+            selected_line = output_lines[1].strip()
+        else:
+            key_pressed = ""
+            selected_line = output_lines[0].strip()
 
         if not selected_line:
             sys.exit(0)
@@ -727,47 +750,91 @@ class InteractivePicker:
         elif key_pressed == "ctrl-d":
             InteractivePicker.handle_delete(session, store)
         else:
-            # Enter was pressed: Show clear action selection menu
+            # Enter was pressed: Show action selection menu
             InteractivePicker.action_menu(session, store, new_window=new_window)
 
     @staticmethod
     def action_menu(session: Session, store: SessionStore, new_window: bool = False) -> None:
         """Display an interactive menu to choose action/mode for the selected conversation."""
         status_str = f"{GREEN}ACTIVE{RESET} (PID {session.pid})" if session.is_active else f"{DIM}IDLE{RESET}"
-        time_str = relative_time(session.last_modified_dt)
+        fzf_bin = shutil.which("fzf")
 
-        print("\n" + "=" * 65)
-        print(f"{BOLD}{session.display_title}{RESET} ({session.short_id})")
-        print(f"Workspace: {YELLOW}{session.display_workspace}{RESET} | Steps: {session.step_count} | Status: {status_str}")
-        print("=" * 65)
-        print("Select an action:")
-        print(f"  {BOLD}[1]{RESET} 🛡️  {GREEN}Safe Mode{RESET}       - Standard mode with tool execution prompts")
-        print(f"  {BOLD}[2]{RESET} ⚡ {YELLOW}Unsafe Mode{RESET}     - Auto-approve tools (--dangerously-skip-permissions)")
-        print(f"  {BOLD}[3]{RESET} 📦 {CYAN}Sandbox Mode{RESET}    - Run in isolated terminal sandbox (--sandbox)")
-        print(f"  {BOLD}[4]{RESET} 📖 {BLUE}View Details{RESET}    - Inspect full dialogue transcript & steps")
-        if session.is_active:
-            print(f"  {BOLD}[5]{RESET} 🛑 {RED}Kill Process{RESET}    - Terminate running session process")
-        print(f"  {BOLD}[d]{RESET} 🗑️  {RED}Delete Session{RESET}  - Remove session from database")
-        print(f"  {BOLD}[0]{RESET} ❌ Cancel")
-        print("=" * 65)
+        choice = ""
+        if fzf_bin and sys.stdin.isatty():
+            menu_items = [
+                "1. 🛡️  Safe Mode          │ Standard mode with tool execution prompts",
+                "2. ⚡ Unsafe Mode        │ Auto-approve tools (--dangerously-skip-permissions)",
+                "3. 📦 Sandbox Mode       │ Run in isolated terminal sandbox (--sandbox)",
+                "4. 📖 View Details       │ Inspect full dialogue transcript & steps",
+            ]
+            if session.is_active:
+                menu_items.append(f"5. 🛑 Kill Process       │ Terminate running session process (PID {session.pid})")
+            menu_items.append("d. 🗑️  Delete Session     │ Remove session from database")
+            menu_items.append("0. ❌ Cancel             │ Return to terminal")
 
-        try:
-            choice = input(f"{BOLD}Choose option [1/2/3/4/d/0] (default 1): {RESET}").strip().lower()
-        except (KeyboardInterrupt, EOFError):
-            print("\nCancelled.")
-            sys.exit(0)
+            header_info = (
+                f"Session  : {session.display_title} ({session.short_id})\n"
+                f"Workspace: {session.display_workspace} │ Steps: {session.step_count} │ Status: {status_str}"
+            )
 
-        if not choice or choice == "1":
+            action_args = [
+                fzf_bin,
+                "--ansi",
+                "--height=35%",
+                "--layout=reverse",
+                "--border=rounded",
+                "--header=" + header_info,
+                "--prompt=Select action > ",
+            ]
+
+            try:
+                proc = subprocess.Popen(
+                    action_args,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    text=True,
+                )
+                out, _ = proc.communicate("\n".join(menu_items))
+                if proc.returncode != 0 or not out.strip():
+                    sys.exit(0)
+                choice = out.strip()[:2].lower()
+            except Exception:
+                choice = ""
+
+        if not choice:
+            # Fallback text menu
+            print("\n" + "=" * 65)
+            print(f"{BOLD}{session.display_title}{RESET} ({session.short_id})")
+            print(f"Workspace: {YELLOW}{session.display_workspace}{RESET} | Steps: {session.step_count} | Status: {status_str}")
+            print("=" * 65)
+            print("Select an action:")
+            print(f"  {BOLD}[1]{RESET} 🛡️  {GREEN}Safe Mode{RESET}       - Standard mode with tool execution prompts")
+            print(f"  {BOLD}[2]{RESET} ⚡ {YELLOW}Unsafe Mode{RESET}     - Auto-approve tools (--dangerously-skip-permissions)")
+            print(f"  {BOLD}[3]{RESET} 📦 {CYAN}Sandbox Mode{RESET}    - Run in isolated terminal sandbox (--sandbox)")
+            print(f"  {BOLD}[4]{RESET} 📖 {BLUE}View Details{RESET}    - Inspect full dialogue transcript & steps")
+            if session.is_active:
+                print(f"  {BOLD}[5]{RESET} 🛑 {RED}Kill Process{RESET}    - Terminate running session process")
+            print(f"  {BOLD}[d]{RESET} 🗑️  {RED}Delete Session{RESET}  - Remove session from database")
+            print(f"  {BOLD}[0]{RESET} ❌ Cancel")
+            print("=" * 65)
+
+            try:
+                choice = ask_input(f"{BOLD}Choose option [1/2/3/4/d/0] (default 1): {RESET}").strip().lower()
+            except (KeyboardInterrupt, EOFError):
+                print("\nCancelled.")
+                sys.exit(0)
+
+        if not choice or choice.startswith("1"):
             Launcher.launch(session, mode="safe", new_window=new_window, base_dir=store.base_dir)
-        elif choice == "2":
+        elif choice.startswith("2"):
             Launcher.launch(session, mode="unsafe", new_window=new_window, base_dir=store.base_dir)
-        elif choice == "3":
+        elif choice.startswith("3"):
             Launcher.launch(session, mode="sandbox", new_window=new_window, base_dir=store.base_dir)
-        elif choice == "4":
+        elif choice.startswith("4"):
             TranscriptViewer.show_full_info(session, store.base_dir)
-        elif choice == "5" and session.is_active:
+        elif choice.startswith("5") and session.is_active:
             InteractivePicker.handle_kill(session, store)
-        elif choice in ("d", "del", "delete"):
+        elif choice.startswith("d"):
             InteractivePicker.handle_delete(session, store)
         else:
             print("Cancelled.")
@@ -778,7 +845,7 @@ class InteractivePicker:
         if not session.is_active:
             print(f"{YELLOW}Session {session.short_id} is not actively running.{RESET}")
             return
-        confirm = input(f"Kill running session {session.short_id} (PID {session.pid})? [y/N]: ").strip().lower()
+        confirm = ask_input(f"Kill running session {session.short_id} (PID {session.pid})? [y/N]: ").strip().lower()
         if confirm == "y":
             if store.kill_session(session):
                 print(f"{GREEN}✓ Terminated session {session.short_id}.{RESET}")
@@ -787,7 +854,7 @@ class InteractivePicker:
 
     @staticmethod
     def handle_delete(session: Session, store: SessionStore) -> None:
-        confirm = input(f"{RED}Are you sure you want to delete session '{session.display_title}' ({session.short_id})? [y/N]: {RESET}").strip().lower()
+        confirm = ask_input(f"{RED}Are you sure you want to delete session '{session.display_title}' ({session.short_id})? [y/N]: {RESET}").strip().lower()
         if confirm == "y":
             store.delete_session(session)
             print(f"{GREEN}✓ Deleted session {session.short_id}.{RESET}")
@@ -805,7 +872,7 @@ class InteractivePicker:
             print(f"{idx:2d}. {status} {s.short_id} │ {t_str:<7} │ {s.step_count:3d} steps │ {s.display_title:<32} │ {s.display_workspace}")
 
         try:
-            sel = input(f"\n{BOLD}Select session number to open (or 'q' to quit): {RESET}").strip()
+            sel = ask_input(f"\n{BOLD}Select session number to open (or 'q' to quit): {RESET}").strip()
         except (KeyboardInterrupt, EOFError):
             sys.exit(0)
 

@@ -59,6 +59,25 @@ class TestSessionManager(unittest.TestCase):
         self.assertIn("Session ID :", preview)
         self.assertIn("Turns/Steps:", preview)
 
+    def test_fzf_output_parsing(self):
+        # Case 1: Enter was pressed (first line empty string, second line selected item)
+        stdout_enter = "\n🟢  1 │ 3ffa82ad │ just now │ 163 steps │ Session Title\t3ffa82ad-5c97-4cca-9109-70f724bb5a6b\n"
+        lines = stdout_enter.splitlines()
+        self.assertGreaterEqual(len(lines), 2)
+        key = lines[0].strip()
+        selected = lines[1].strip()
+        self.assertEqual(key, "")  # Enter key
+        self.assertIn("3ffa82ad-5c97-4cca-9109-70f724bb5a6b", selected)
+
+        # Case 2: Hotkey was pressed (e.g. ctrl-u)
+        stdout_hotkey = "ctrl-u\n🟢  1 │ 3ffa82ad │ just now │ 163 steps │ Session Title\t3ffa82ad-5c97-4cca-9109-70f724bb5a6b\n"
+        lines_hk = stdout_hotkey.splitlines()
+        self.assertGreaterEqual(len(lines_hk), 2)
+        key_hk = lines_hk[0].strip()
+        selected_hk = lines_hk[1].strip()
+        self.assertEqual(key_hk, "ctrl-u")
+        self.assertIn("3ffa82ad-5c97-4cca-9109-70f724bb5a6b", selected_hk)
+
 
 if __name__ == "__main__":
     unittest.main()

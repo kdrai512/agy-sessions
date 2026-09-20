@@ -8,6 +8,10 @@ _agy_sessions() {
         'active:Show currently running sessions and PIDs'
         'resume:Resume a session directly'
         'open:Alias for resume'
+        'search:Search transcripts for code or keywords'
+        'find:Alias for search'
+        'rename:Rename a conversation session title'
+        'export:Export session dialogue to Markdown'
         'info:Display session details and transcript'
         'show:Alias for info'
         'kill:Terminate a running session process'
@@ -17,6 +21,7 @@ _agy_sessions() {
 
     _arguments -C \
         '(-w --window)'{-w,--window}'[Launch in a new Omarchy terminal window]' \
+        '(-c --current-dir)'{-c,--current-dir}'[Filter sessions to current workspace directory]' \
         '(-h --help)'{-h,--help}'[Show help]' \
         '1: :->cmd' \
         '*:: :->args'
@@ -38,7 +43,26 @@ _agy_sessions() {
                     ;;
                 list|ls)
                     _arguments \
-                        '(-n --limit)'{-n,--limit}'[Number of sessions to display]:limit:'
+                        '(-n --limit)'{-n,--limit}'[Number of sessions to display]:limit:' \
+                        '(-c --current-dir)'{-c,--current-dir}'[Filter to current workspace directory]'
+                    ;;
+                search|find)
+                    _arguments \
+                        '(-n --limit)'{-n,--limit}'[Maximum number of results]:limit:' \
+                        '(-c --current-dir)'{-c,--current-dir}'[Filter search to current workspace directory]' \
+                        '(-r --resume)'{-r,--resume}'[Prompt to select and resume a matching session]' \
+                        '1:Keyword or search term:'
+                    ;;
+                rename)
+                    _arguments \
+                        '1:Session ID, index, or title:' \
+                        '2:New title:'
+                    ;;
+                export)
+                    _arguments \
+                        '--stdout[Print Markdown directly to stdout]' \
+                        '1:Session ID, index, or title:' \
+                        '2:Output filepath:'
                     ;;
                 info|show|kill|delete|rm)
                     _arguments \

@@ -1,7 +1,10 @@
 """Unit tests for agy-sessions."""
 
 import os
+import shutil
+import sqlite3
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -77,6 +80,84 @@ class TestSessionManager(unittest.TestCase):
         selected_hk = lines_hk[1].strip()
         self.assertEqual(key_hk, "ctrl-u")
         self.assertIn("3ffa82ad-5c97-4cca-9109-70f724bb5a6b", selected_hk)
+
+    def test_workspace_matching(self):
+        ws = "/home/mrworld/Work/agy-sessions"
+        exact = Path("/home/mrworld/Work/agy-sessions")
+        sub = Path("/home/mrworld/Work/agy-sessions/src/agy_sessions")
+        other = Path("/home/mrworld/Work/omarchy")
+        home = Path("/home/mrworld")
+
+        self.assertTrue(cli.is_in_workspace(ws, exact))
+        self.assertTrue(cli.is_in_workspace(ws, sub))
+        self.assertFalse(cli.is_in_workspace(ws, other))
+        self.assertFalse(cli.is_in_workspace(ws, home))
+        self.assertFalse(cli.is_in_workspace("", exact))
+
+    def test_rename_session_in_database(self):
+        tmp_dir = Path(tempfile.mkdtemp())
+        try:
+            db_file = tmp_dir / "conversation_summaries.db"
+            conn = sqlite3.connect(db_file)
+            cur = conn.cursor()
+            cur.execute("""
+                CREATE TABLE conversation_summaries (
+                    conversation_id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    preview TEXT NOT NULL DEFAULT '',
+                    step_count INTEGER NOT NULL DEFAULT 0,
+                    last_modified_time TEXT NOT NULL,
+                    workspace_uris TEXT NOT NULL DEFAULT '[]',
+                    parent_conversation_id TEXT NOT NULL DEFAULT ''
+                )
+            """)
+            cur.execute("""
+                INSERT INTO conversation_summaries (conversation_id, title, last_modified_time)
+                VALUES ('test-1234-abcd', 'Original Title', '2026-09-20T10:00:00Z')
+            """)
+            conn.commit()
+            conn.close()
+
+            custom_store = cli.SessionStore(base_dir=tmp_dir)
+            session = custom_store.get_session("test-1234")
+            self.assertIsNotNone(session)
+            self.assertEqual(session.title, "Original Title")
+
+            success = custom_store.rename_session(session, "Brand New Name")
+            self.assertTrue(success)
+            self.assertEqual(session.title, "Brand New Name")
+
+            # Verify persisted in SQLite
+            conn = sqlite3.connect(db_file)
+            cur = conn.cursor()
+            cur.execute("SELECT title FROM conversation_summaries WHERE conversation_id = 'test-1234-abcd'")
+            row = cur.fetchone()
+            conn.close()
+            self.assertEqual(row[0], "Brand New Name")
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    def test_export_markdown_generation(self):
+        sessions = self.store.list_sessions()
+        if not sessions:
+            self.skipTest("No sessions available for export test")
+        s = sessions[0]
+        md = cli.TranscriptViewer.export_markdown(s, self.store.base_dir)
+        self.assertIn(f"# {s.display_title}", md)
+        self.assertIn(f"- **Session ID**: `{s.conversation_id}`", md)
+        self.assertIn(f"- **Workspace**:", md)
+
+    def test_search_transcripts(self):
+        results = cli.TranscriptViewer.search_transcripts(self.store, "AppLibrary", limit=5)
+        self.assertIsInstance(results, list)
+        if results:
+            first_session, matches = results[0]
+            self.assertIsInstance(first_session, cli.Session)
+            self.assertGreater(len(matches), 0)
+            step_idx, role, snippet = matches[0]
+            self.assertIsInstance(step_idx, int)
+            self.assertIsInstance(role, str)
+            self.assertIsInstance(snippet, str)
 
 
 if __name__ == "__main__":

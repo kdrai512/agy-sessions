@@ -5,8 +5,8 @@
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-lightgrey.svg)](https://github.com/kdrai512/agy-sessions)
 [![Zero Dependencies](https://img.shields.io/badge/dependencies-zero%20external-brightgreen.svg)](pyproject.toml)
 
-> **Interactive TUI session manager for Google Antigravity (`agy`) CLI.**  
-> Seamlessly browse, search, inspect, and resume past or active agent conversations with instant execution mode switching (**Safe**, **Unsafe**, **Sandbox**) and automatic workspace navigation.
+> **Interactive TUI & CLI session manager for Google Antigravity (`agy`).**  
+> Seamlessly browse, search, inspect, rename, export, and resume past or active agent conversations with instant execution mode switching (**Safe**, **Unsafe**, **Sandbox**), deep transcript search, and automatic workspace navigation.
 
 ---
 
@@ -17,21 +17,23 @@
  │  ⚪  3 │ bfb43505 │ 31m ago  │  28 steps │ Accessing Previous Chat His... │ ~/Work              │
  │  ⚪  4 │ caefa9c3 │ 57m ago  │  85 steps │ Uninstall Codex From Omarchy   │ ~/Work              │
  ╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
-  [ENTER: Action Menu]  [^U: Unsafe Mode]  [^S: Safe Mode]  [^B: Sandbox]  [^T: Transcript]  [^K: Kill]
+  [ENTER: Action Menu]  [^U: Unsafe]  [^S: Safe]  [^B: Sandbox]  [^W: Workspace]  [^R: Rename]  [^T: Details]
 ```
 
 ---
 
-## 🚀 Why `agy-sessions`?
-
-Google Antigravity (`agy`) is an agentic coding assistant, but managing multiple parallel sessions, recalling past conversation IDs, or toggling between guarded execution and automated pipelines can be tedious:
+## 🚀 Key Features
 
 1. **No Session Amnesia**: Instantly fuzzy-search through all past conversations by title, keyword, ID, or workspace.
-2. **Live Side-by-Side Preview**: Read the last 10 conversation turns, user prompts, agent summaries, and tool calls directly in your terminal before resuming.
-3. **Execution Mode Flexibility**: Choose whether to run with guarded tool permissions (**Safe Mode**), automated headless execution (**Unsafe Mode** via `--dangerously-skip-permissions`), or restricted container isolation (**Sandbox Mode**).
-4. **Auto-Workspace Navigation**: `agys` reads the session's original workspace path and automatically `cd`s to it prior to resuming, guaranteeing git roots, relative paths, and local configs remain consistent.
-5. **Real-Time Lock & Process Tracking**: Detects active vs idle sessions using Linux advisory locks (`/proc/locks`), identifies holding PIDs, and allows one-click termination of runaway tasks.
-6. **Zero External Dependencies**: Built entirely with Python's standard library. Works out of the box on any system with Python 3.8+.
+2. **Deep Transcript Search (`agys search <term>`)**: Full-text search across all conversation dialogue, code snippets, tool calls, and commands with turn index and highlighted snippets.
+3. **Workspace Scoping (`agys -c` / `Ctrl+W`)**: Filter conversations to your current project directory, or toggle dynamically between *Current Workspace* and *All Workspaces* in `fzf`.
+4. **Session Renaming (`agys rename` / `Ctrl+R`)**: Edit auto-generated titles directly in SQLite storage and the interactive TUI.
+5. **Markdown Transcript Export (`agys export`)**: Export any session into clean GitHub-flavored Markdown with collapsible `<details>` blocks for tool executions.
+6. **Execution Mode Flexibility**: Choose whether to run with guarded tool permissions (**Safe Mode**), automated headless execution (**Unsafe Mode** via `--dangerously-skip-permissions`), or isolated container execution (**Sandbox Mode**).
+7. **Live Side-by-Side Preview & Model Badges**: View active model badges (e.g. `🔮 Gemini 3.8 Flash (High)`), conversation dialogue, user prompts, and tool calls before resuming.
+8. **Auto-Workspace Navigation**: Automatically switches working directories to the session's workspace before resuming, ensuring git branches, relative paths, and env vars are aligned.
+9. **Desktop Spotlight Integration**: Integrates with Hyprland and Omarchy (`SUPER + A`) as a centered, floating modal window.
+10. **Zero External Dependencies**: 100% pure Python standard library. No `pip install` required.
 
 ---
 
@@ -74,20 +76,22 @@ Simply run:
 
 ```bash
 agys
-# or
-agy-sessions
+# or scoped to current directory
+agys -c
 ```
 
-If [`fzf`](https://github.com/junegunn/fzf) is installed on your system, `agys` launches an interactive fuzzy selector with a rich split-pane preview window displaying full metadata and conversation dialogue. If `fzf` is not present, it gracefully falls back to a clean numbered terminal menu.
+If [`fzf`](https://github.com/junegunn/fzf) is installed, `agys` launches an interactive fuzzy selector with a rich split-pane preview window displaying full metadata and conversation dialogue. If `fzf` is not present, it gracefully falls back to a clean numbered terminal menu.
 
 ### ⌨️ Speed Keybindings in `fzf`
 
 | Key | Action |
 | :--- | :--- |
-| **`Enter`** | Open interactive action menu (Safe / Unsafe / Sandbox / Transcript / Delete) |
+| **`Enter`** | Open action submenu (Safe / Unsafe / Sandbox / Details / Rename / Export / Delete) |
 | **`Ctrl + U`** | Directly resume in **⚡ Unsafe Mode** (`--dangerously-skip-permissions`) |
 | **`Ctrl + S`** | Directly resume in **🛡️ Safe Mode** (prompts for tool approvals) |
 | **`Ctrl + B`** | Directly resume in **📦 Sandbox Mode** (`--sandbox`) |
+| **`Ctrl + W`** | **Toggle Workspace Scope** (switch between current directory and all projects) |
+| **`Ctrl + R`** | **Rename Session Title** (inline edit stored in SQLite) |
 | **`Ctrl + T`** | Open full formatted dialogue transcript in system pager (`bat` / `less`) |
 | **`Ctrl + K`** | Terminate active running session process (`SIGTERM`) |
 | **`Ctrl + D`** | Delete / archive session from database |
@@ -97,45 +101,65 @@ If [`fzf`](https://github.com/junegunn/fzf) is installed on your system, `agys` 
 
 ## 🛠️ CLI Subcommands
 
-`agys` can also be driven entirely from scripts or terminal subcommands:
+`agys` can be driven entirely from scripts or terminal subcommands:
 
 ### 1. List Sessions
 
 ```bash
-# List top 20 recent sessions
+# List top 25 recent sessions
 agys list
+
+# Filter only to current project workspace
+agys list -c
 
 # Limit results
 agys list -n 5
 ```
 
-Output:
-```text
-#   STATUS   ID         UPDATED    STEPS  TITLE                                  WORKSPACE
-─────────────────────────────────────────────────────────────────────────────────────────────────────────
-1   ACTIVE   3ffa82ad   4m ago     163    Load Previous Conversation             ~/Work/tries/2026-09-03-agy-sandbox
-2   IDLE     2a0fea06   28m ago    343    Managing Background Docker Processes   ~/Work/tries/2026-09-03-agy-sandbox
-3   IDLE     bfb43505   30m ago    28     Accessing Previous Chat History        ~/Work
-4   IDLE     caefa9c3   55m ago    85     Uninstall Codex From Omarchy           ~/Work
-```
+### 2. Deep Transcript Search
 
-### 2. View Active Sessions
+Search inside conversation transcripts, user prompts, agent thoughts, and tool executions:
 
 ```bash
-agys active
+# Search across all sessions
+agys search "AppLibrary"
+
+# Limit results
+agys search "docker" -n 5
+
+# Search only within current workspace
+agys search "hyprland" -c
+
+# Search and interactively prompt to resume
+agys search "nginx" -r
 ```
 
-Output:
-```text
-Active Antigravity Sessions (1):
+### 3. Rename a Session
 
-  ● 3ffa82ad (PID 863194) │ 4m ago │ 163 steps │ Load Previous Conversation
-    Workspace: ~/Work/tries/2026-09-03-agy-sandbox
+```bash
+# Rename by index, short ID, or UUID
+agys rename 1 "Docker Engine Cleanup & Setup"
+agys rename 2a0fea06 "Omarchy Menu Fixes"
 ```
 
-### 3. Resume a Session
+### 4. Export to Markdown
 
-You can target sessions by **1-based index**, **short ID**, **full UUID**, or **title keyword**:
+Export complete dialogue transcripts with collapsible `<details>` blocks for tool executions:
+
+```bash
+# Export session #1 to ./<title-slug>.md
+agys export 1
+
+# Export to a custom path
+agys export 2a0fea06 ~/Documents/session-notes.md
+
+# Pipe Markdown directly to glow or pager
+agys export 1 --stdout | glow -
+```
+
+### 5. Resume a Session
+
+Target sessions by **1-based index**, **short ID**, **full UUID**, or **title keyword**:
 
 ```bash
 # Resume session #2 in Safe Mode (default)
@@ -154,61 +178,83 @@ agys resume 2 -w
 agys resume docker -u
 ```
 
-### 4. Inspect Full Transcript
+### 6. View Active Sessions & Kill
 
 ```bash
-# View detailed transcript and turns in pager
-agys info 2a0fea06
-```
+# Show active sessions and holding PIDs
+agys active
 
-### 5. Terminate / Delete Sessions
-
-```bash
-# Kill a stuck or running session
+# Kill a running session
 agys kill 1
-
-# Delete / archive a session
-agys delete caefa9c3
 ```
+
+---
+
+## 🖥️ Hyprland Desktop Integration (Spotlight Window)
+
+To bind `agys` to `SUPER + A` as a centered, floating spotlight window (Raycast-style):
+
+1. Add the keybinding in `~/.config/hypr/bindings.lua`:
+   ```lua
+   o.bind("SUPER + A", "Antigravity Sessions", { tui = "agys" })
+   ```
+
+2. Add the window rule in `~/.config/hypr/hyprland.lua`:
+   ```lua
+   o.window("org.omarchy.agys", {
+     float = true,
+     center = true,
+     size = { 1150, 680 },
+   })
+   ```
+
+3. Reload Hyprland:
+   ```bash
+   hyprctl reload && hyprctl configerrors
+   ```
 
 ---
 
 ## ⚙️ How It Works
 
 ```mermaid
-flowchart LR
-    A["agys command"] --> B["SessionStore"]
-    B --> C["conversation_summaries.db\n(SQLite)"]
-    B --> D["presence/*.lock\n(/proc/locks)"]
-    B --> E["brain/<id>/transcript.jsonl"]
-    B --> F["fzf TUI / Subcommand"]
-    F --> G["Launcher"]
-    G --> H["cd to Workspace"]
-    H --> I["exec agy --conversation <id> [flags]"]
-```
+flowchart TD
+    subgraph CLI ["agys CLI & TUI"]
+        A["agys"] --> B{"Command / Flags"}
+        B -- "agys -c" --> C["Workspace Scoping (PWD filter)"]
+        B -- "agys search" --> D["Deep Transcript Scanner"]
+        B -- "agys rename" --> E["SQLite Title Transaction"]
+        B -- "agys export" --> F["Markdown Generator"]
+        B -- "agys (interactive)" --> G["Enhanced fzf Picker"]
+    end
 
-1. **Storage Engine**: Queries Antigravity's internal SQLite database (`~/.gemini/antigravity-cli/conversation_summaries.db`) and supplements it with `conversations/*.db` and `history.jsonl`.
-2. **Presence & Lock Detection**: Inspects advisory FLOCK locks in `~/.gemini/antigravity-cli/presence/*.lock` and correlates with `/proc/locks` and `/proc/*/fd` to discover live process PIDs.
-3. **Transcript Parser**: Streams `transcript.jsonl` from the agent's brain directory, stripping metadata envelopes and extracting readable user requests, assistant answers, and tool calls (`run_command`, `view_file`, etc.).
-4. **Workspace Preservation**: Extracts `workspace_uris`, unescapes `file://` URIs, and changes working directory before invoking `agy`.
+    subgraph Hotkeys ["Interactive TUI Hotkeys"]
+        G --> H["Ctrl+W: Toggle Workspace Scope"]
+        G --> I["Ctrl+R: Inline Rename"]
+        G --> J["Ctrl+U: Unsafe Resume"]
+        G --> K["Ctrl+S: Safe Resume"]
+        G --> L["Enter: Action Menu"]
+    end
+
+    subgraph Launch ["Execution"]
+        J & K --> M["cd Workspace"] --> N["exec agy --conversation <id>"]
+    end
+```
 
 ---
 
 ## 🐚 Shell Completions
 
-Pre-built shell completions are included in the `completions/` directory:
+Pre-built shell completions are included in `completions/`:
 
 ### Bash
 ```bash
 cp completions/agy-sessions.bash ~/.local/share/bash-completion/completions/agy-sessions
-# or source it in ~/.bashrc:
-source /path/to/completions/agy-sessions.bash
 ```
 
 ### Zsh
 ```bash
 cp completions/agy-sessions.zsh ~/.zsh/completion/_agy-sessions
-# Ensure fpath includes ~/.zsh/completion in ~/.zshrc
 ```
 
 ### Fish

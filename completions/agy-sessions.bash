@@ -4,8 +4,8 @@ _agy_sessions() {
     local cur prev words cword
     _init_completion || return
 
-    local commands="list ls active resume open info show preview kill delete rm"
-    local flags="-h --help -w --window"
+    local commands="list ls active resume open search find rename export info show preview kill delete rm"
+    local flags="-h --help -w --window -c --current-dir"
 
     if [[ $cword -eq 1 ]]; then
         COMPREPLY=( $(compgen -W "$commands $flags" -- "$cur") )
@@ -19,7 +19,15 @@ _agy_sessions() {
             return 0
             ;;
         list|ls)
-            COMPREPLY=( $(compgen -W "-n --limit" -- "$cur") )
+            COMPREPLY=( $(compgen -W "-n --limit -c --current-dir" -- "$cur") )
+            return 0
+            ;;
+        search|find)
+            COMPREPLY=( $(compgen -W "-n --limit -c --current-dir -r --resume" -- "$cur") )
+            return 0
+            ;;
+        export)
+            COMPREPLY=( $(compgen -W "--stdout" -- "$cur") )
             return 0
             ;;
         *)

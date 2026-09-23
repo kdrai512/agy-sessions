@@ -246,6 +246,29 @@ class TestSessionManager(unittest.TestCase):
         finally:
             cli.InteractivePicker.run = original_run
 
+    def test_launcher_launch_in_new_window_dry_run(self):
+        sessions = self.store.list_sessions()
+        if not sessions:
+            self.skipTest("No sessions available")
+        s = sessions[0]
+        # Should not raise exception with new_window=True
+        cli.Launcher.launch(s, mode="safe", new_window=True, dry_run=True)
+        cli.Launcher.launch(s, mode="unsafe", new_window=True, dry_run=True)
+
+    def test_is_running_in_spotlight_env(self):
+        old_val = os.environ.get("AGYS_SPOTLIGHT")
+        try:
+            os.environ["AGYS_SPOTLIGHT"] = "1"
+            self.assertTrue(cli.is_running_in_spotlight())
+            os.environ.pop("AGYS_SPOTLIGHT")
+            # If not in spotlight env or hyprland spotlight window, should return false or boolean
+            self.assertIsInstance(cli.is_running_in_spotlight(), bool)
+        finally:
+            if old_val is not None:
+                os.environ["AGYS_SPOTLIGHT"] = old_val
+            else:
+                os.environ.pop("AGYS_SPOTLIGHT", None)
+
 
 if __name__ == "__main__":
     unittest.main()

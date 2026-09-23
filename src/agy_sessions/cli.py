@@ -776,6 +776,36 @@ class TranscriptViewer:
 
 class Launcher:
     @staticmethod
+    def launch_in_new_window(cmd: List[str], cwd: str, app_id: Optional[str] = None) -> bool:
+        """Spawn a command in a new normal terminal window."""
+        uwsm = shutil.which("uwsm-app")
+        term = shutil.which("xdg-terminal-exec") or shutil.which("x-terminal-emulator")
+
+        if uwsm and term:
+            full_cmd = [uwsm, "--", term]
+            if app_id:
+                full_cmd.append(f"--app-id={app_id}")
+            full_cmd.extend(["-e"] + cmd)
+            subprocess.Popen(full_cmd, cwd=cwd, start_new_session=True)
+            return True
+
+        if term:
+            full_cmd = [term]
+            if app_id:
+                full_cmd.append(f"--app-id={app_id}")
+            full_cmd.extend(["-e"] + cmd)
+            subprocess.Popen(full_cmd, cwd=cwd, start_new_session=True)
+            return True
+
+        launch_terminal = shutil.which("omarchy-launch-terminal")
+        if launch_terminal:
+            full_cmd = [launch_terminal, "-e"] + cmd
+            subprocess.Popen(full_cmd, cwd=cwd, start_new_session=True)
+            return True
+
+        return False
+
+    @staticmethod
     def launch(
         session: Session,
         mode: str = "safe",
@@ -823,28 +853,12 @@ class Launcher:
             print(f"{BOLD}[DRY-RUN]{RESET} Working Directory: {os.getcwd()}")
             print(f"{BOLD}[DRY-RUN]{RESET} Target Command    : {' '.join(cmd)}")
             if new_window:
-                print(f"{BOLD}[DRY-RUN]{RESET} Window Mode       : omarchy-launch-tui --app-id=org.omarchy.agy-{session.short_id}")
+                print(f"{BOLD}[DRY-RUN]{RESET} Window Mode       : Normal terminal window")
             return
 
-    @staticmethod
-    def launch_in_new_window(cmd: List[str], app_id: str, cwd: str) -> bool:
-        """Spawn a command in a new Omarchy or system terminal window."""
-        launch_tui = shutil.which("omarchy-launch-tui")
-        if launch_tui:
-            full_cmd = [launch_tui, f"--app-id={app_id}"] + cmd
-            subprocess.Popen(full_cmd, cwd=cwd, start_new_session=True)
-            return True
-        term = shutil.which("xdg-terminal-exec") or shutil.which("x-terminal-emulator")
-        if term:
-            full_cmd = [term, "-e"] + cmd
-            subprocess.Popen(full_cmd, cwd=cwd, start_new_session=True)
-            return True
-        return False
-
         if new_window:
-            app_id = f"org.omarchy.agy-{session.short_id}"
-            if Launcher.launch_in_new_window(cmd, app_id=app_id, cwd=os.getcwd()):
-                print(f"{GREEN}✓ Launched session in new Omarchy window.{RESET}")
+            if Launcher.launch_in_new_window(cmd, cwd=os.getcwd()):
+                print(f"{GREEN}✓ Launched session in new normal terminal window.{RESET}")
                 return
             else:
                 print(f"{YELLOW}Warning: No terminal window launcher found. Running inline.{RESET}", file=sys.stderr)
@@ -1011,9 +1025,8 @@ class MultiplexerManager:
                 return
 
             if force_new_window:
-                app_id = f"org.omarchy.{session_name}"
-                if Launcher.launch_in_new_window(tmux_full, app_id=app_id, cwd=ws):
-                    print(f"{GREEN}✓ Launched tmux session '{session_name}' in new terminal window.{RESET}")
+                if Launcher.launch_in_new_window(tmux_full, cwd=ws):
+                    print(f"{GREEN}✓ Launched tmux session '{session_name}' in new normal terminal window.{RESET}")
                     return
 
             print(f"\n{BOLD}{CYAN}▶ Launching tmux session '{session_name}'...{RESET}")
@@ -1027,9 +1040,8 @@ class MultiplexerManager:
                 print(f"{BOLD}[DRY-RUN]{RESET} Command            : {' '.join(zellij_full)}")
                 return
             if force_new_window:
-                app_id = f"org.omarchy.{session_name}"
-                if Launcher.launch_in_new_window(zellij_full, app_id=app_id, cwd=ws):
-                    print(f"{GREEN}✓ Launched zellij session '{session_name}' in new terminal window.{RESET}")
+                if Launcher.launch_in_new_window(zellij_full, cwd=ws):
+                    print(f"{GREEN}✓ Launched zellij session '{session_name}' in new normal terminal window.{RESET}")
                     return
             print(f"\n{BOLD}{CYAN}▶ Launching zellij session '{session_name}'...{RESET}")
             os.chdir(ws)
@@ -1042,9 +1054,8 @@ class MultiplexerManager:
                 print(f"{BOLD}[DRY-RUN]{RESET} Command            : {' '.join(screen_full)}")
                 return
             if force_new_window:
-                app_id = f"org.omarchy.{session_name}"
-                if Launcher.launch_in_new_window(screen_full, app_id=app_id, cwd=ws):
-                    print(f"{GREEN}✓ Launched screen session '{session_name}' in new terminal window.{RESET}")
+                if Launcher.launch_in_new_window(screen_full, cwd=ws):
+                    print(f"{GREEN}✓ Launched screen session '{session_name}' in new normal terminal window.{RESET}")
                     return
             print(f"\n{BOLD}{CYAN}▶ Launching screen session '{session_name}'...{RESET}")
             os.chdir(ws)
@@ -1682,6 +1693,28 @@ def cmd_delete(store: SessionStore, args: argparse.Namespace) -> None:
     InteractivePicker.handle_delete(session, store)
 
 
+def is_running_in_spotlight() -> bool:
+    """Detect whether agys is running inside a Hyprland floating spotlight modal."""
+    if os.environ.get("AGYS_SPOTLIGHT") in ("1", "true", "TRUE"):
+        return True
+    if os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+        try:
+            res = subprocess.run(
+                ["hyprctl", "activewindow", "-j"],
+                capture_output=True,
+                text=True,
+                timeout=0.25,
+            )
+            if res.returncode == 0 and res.stdout:
+                data = json.loads(res.stdout)
+                cls = (data.get("class") or "") + (data.get("initialClass") or "")
+                if "org.omarchy.agys" in cls:
+                    return True
+        except Exception:
+            pass
+    return False
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="agy-sessions",
@@ -1761,6 +1794,8 @@ def main() -> None:
     p_del.add_argument("query", help="Session index, short ID, or UUID prefix")
 
     args = parser.parse_args()
+    if not args.window and is_running_in_spotlight():
+        args.window = True
     store = SessionStore()
 
     if args.subcommand in ("list", "ls"):

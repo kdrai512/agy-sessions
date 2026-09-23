@@ -232,21 +232,28 @@ agys kill 1
 
 ---
 
-## 🖥️ Hyprland Desktop Integration (Spotlight Window)
+## 🖥️ Hyprland Desktop Integration (Spotlight Modal → Normal Terminal)
 
 Bind `agys` to centered, floating spotlight windows (Raycast-style):
-- **`SUPER + A`**: Open general `agys` session manager (Action Menu / Safe / Unsafe / Details)
-- **`SUPER + ALT + A`**: Open `agys` directly in **tmux mode** (selecting any conversation resumes immediately in tmux)
+- **`SUPER + A`**: Open general `agys` session manager modal (browse, search, action menu)
+- **`SUPER + ALT + A`**: Open `agys` directly in **tmux mode** modal
+
+> **Seamless UX**: The interactive picker opens inside a sleek centered floating spotlight window. Once you select your conversation and execution mode (Safe, Unsafe, Sandbox, or Tmux), the small spotlight window automatically closes and the session opens in your **normal, full-sized terminal**!
 
 1. Add keybindings in `~/.config/hypr/bindings.lua`:
    ```lua
-   o.bind("SUPER + A", "Antigravity Sessions", { tui = "agys" })
+   o.bind("SUPER + A", "Antigravity Sessions", { tui = "agys-spotlight" })
    o.bind("SUPER + ALT + A", "Antigravity Sessions (tmux)", { tui = "agys-tmux" })
    ```
 
 2. Add the window rules in `~/.config/hypr/hyprland.lua`:
    ```lua
    o.window("org.omarchy.agys", {
+     float = true,
+     center = true,
+     size = { 1150, 680 },
+   })
+   o.window("org.omarchy.agys-spotlight", {
      float = true,
      center = true,
      size = { 1150, 680 },

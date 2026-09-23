@@ -1,0 +1,4 @@
+#!/bin/bash
+# agys-spotlight: Launch Antigravity Sessions manager in spotlight modal mode
+export AGYS_SPOTLIGHT=1
+exec agy-sessions -w "$@"

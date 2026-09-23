@@ -826,24 +826,229 @@ class Launcher:
                 print(f"{BOLD}[DRY-RUN]{RESET} Window Mode       : omarchy-launch-tui --app-id=org.omarchy.agy-{session.short_id}")
             return
 
+    @staticmethod
+    def launch_in_new_window(cmd: List[str], app_id: str, cwd: str) -> bool:
+        """Spawn a command in a new Omarchy or system terminal window."""
+        launch_tui = shutil.which("omarchy-launch-tui")
+        if launch_tui:
+            full_cmd = [launch_tui, f"--app-id={app_id}"] + cmd
+            subprocess.Popen(full_cmd, cwd=cwd, start_new_session=True)
+            return True
+        term = shutil.which("xdg-terminal-exec") or shutil.which("x-terminal-emulator")
+        if term:
+            full_cmd = [term, "-e"] + cmd
+            subprocess.Popen(full_cmd, cwd=cwd, start_new_session=True)
+            return True
+        return False
+
         if new_window:
-            launch_tui = shutil.which("omarchy-launch-tui")
-            if launch_tui:
-                app_id = f"org.omarchy.agy-{session.short_id}"
-                full_cmd = [launch_tui, f"--app-id={app_id}"] + cmd
-                subprocess.Popen(full_cmd, cwd=os.getcwd(), start_new_session=True)
+            app_id = f"org.omarchy.agy-{session.short_id}"
+            if Launcher.launch_in_new_window(cmd, app_id=app_id, cwd=os.getcwd()):
                 print(f"{GREEN}✓ Launched session in new Omarchy window.{RESET}")
                 return
             else:
-                term = shutil.which("xdg-terminal-exec") or shutil.which("x-terminal-emulator")
-                if term:
-                    full_cmd = [term, "-e"] + cmd
-                    subprocess.Popen(full_cmd, cwd=os.getcwd(), start_new_session=True)
-                    print(f"{GREEN}✓ Launched session in new terminal window.{RESET}")
-                    return
+                print(f"{YELLOW}Warning: No terminal window launcher found. Running inline.{RESET}", file=sys.stderr)
 
         # Replace current process inline
         os.execvp(cmd[0], cmd)
+
+
+class MultiplexerManager:
+    """Detect and launch sessions inside terminal multiplexers (tmux, zellij, screen) or fallback."""
+
+    @staticmethod
+    def detect(preferred: Optional[str] = None) -> Tuple[Optional[str], str, Optional[str]]:
+        """Return (name, status, binary_path) where status is 'active', 'installed', or 'none'.
+
+        'active' means current shell is running inside the multiplexer.
+        'installed' means binary exists on the system.
+        'none' means no multiplexer is found.
+        """
+        # 1. If currently running inside a multiplexer, prioritize the active one
+        if os.environ.get("TMUX"):
+            return ("tmux", "active", shutil.which("tmux"))
+        if os.environ.get("ZELLIJ") or os.environ.get("ZELLIJ_SESSION_NAME"):
+            return ("zellij", "active", shutil.which("zellij"))
+        if os.environ.get("STY"):
+            return ("screen", "active", shutil.which("screen"))
+
+        # 2. Check user preferred multiplexer if explicitly requested
+        if preferred:
+            bin_path = shutil.which(preferred)
+            if bin_path:
+                return (preferred, "installed", bin_path)
+
+        # 3. Check installed multiplexers in priority order: tmux -> zellij -> screen
+        for name in ["tmux", "zellij", "screen"]:
+            bin_path = shutil.which(name)
+            if bin_path:
+                return (name, "installed", bin_path)
+
+        return (None, "none", None)
+
+    @staticmethod
+    def get_menu_label() -> str:
+        name, status, _ = MultiplexerManager.detect()
+        if status == "active":
+            return f"m. 🪟 Multiplexer [{name}: active]   │ Open new window/tab in current {name}"
+        elif status == "installed":
+            return f"m. 🪟 Multiplexer [{name}]          │ Open in {name} session (agy-<id>)"
+        else:
+            return "m. 🪟 New Terminal Window          │ No multiplexer found; open in new window"
+
+    @staticmethod
+    def launch(
+        session: Session,
+        mode: str = "safe",
+        preferred_mux: Optional[str] = None,
+        force_new_window: bool = False,
+        base_dir: Optional[Path] = None,
+        dry_run: bool = False,
+    ) -> None:
+        """Launch session in terminal multiplexer, or fallback to new terminal window if none."""
+        mux_name, mux_status, mux_bin = MultiplexerManager.detect(preferred=preferred_mux)
+
+        agy_bin = shutil.which("agy") or shutil.which("antigravity-cli")
+        if not agy_bin:
+            fallback = Path.home() / ".local/bin/agy"
+            if fallback.exists():
+                agy_bin = str(fallback)
+            else:
+                print(f"{RED}Error: agy binary not found in PATH.{RESET}", file=sys.stderr)
+                sys.exit(1)
+
+        agy_cmd = [agy_bin, "--conversation", session.conversation_id]
+        mode_label = "Safe Mode"
+        if mode == "unsafe":
+            agy_cmd.append("--dangerously-skip-permissions")
+            mode_label = "⚡ Unsafe Mode (--dangerously-skip-permissions)"
+        elif mode == "sandbox":
+            agy_cmd.append("--sandbox")
+            mode_label = "📦 Sandbox Mode (--sandbox)"
+        else:
+            mode_label = "🛡️  Safe Mode (Default Prompts)"
+
+        ws = session.workspace_path or str(Path.home())
+        if not Path(ws).is_dir():
+            ws = str(Path.cwd())
+
+        session_name = f"agy-{session.short_id}"
+
+        # FALLBACK: No multiplexer found -> open in new terminal window
+        if mux_status == "none" or not mux_bin:
+            print(f"\n{YELLOW}Notice: No terminal multiplexer found on this system (tmux, zellij, screen).{RESET}")
+            print(f"{CYAN}▶ Opening session '{session.display_title}' in new terminal window...{RESET}\n")
+            Launcher.launch(session, mode=mode, new_window=True, base_dir=base_dir, dry_run=dry_run)
+            return
+
+        print(f"\n{BOLD}{CYAN}▶ Launching Antigravity Session via {mux_name.upper()}{RESET}")
+        print(f"  {DIM}Session     :{RESET} {WHITE}{session.display_title}{RESET} ({session.short_id})")
+        print(f"  {DIM}Multiplexer :{RESET} {MAGENTA}{mux_name}{RESET} ({mux_status})")
+        print(f"  {DIM}Mode        :{RESET} {mode_label}")
+        print(f"  {DIM}Workspace   :{RESET} {YELLOW}{ws}{RESET}\n")
+
+        # CASE 1: Inside active tmux
+        if mux_name == "tmux" and mux_status == "active":
+            cmd_str = " ".join([f"'{c}'" if " " in c else c for c in agy_cmd])
+            if dry_run:
+                print(f"{BOLD}[DRY-RUN]{RESET} Multiplexer Status : Active tmux session")
+                print(f"{BOLD}[DRY-RUN]{RESET} Working Directory  : {ws}")
+                print(f"{BOLD}[DRY-RUN]{RESET} Target Command     : tmux new-window -n {session_name} -c {ws} {cmd_str}")
+                return
+
+            try:
+                chk = subprocess.run(["tmux", "list-windows", "-F", "#{window_name}"], capture_output=True, text=True)
+                if session_name in chk.stdout.splitlines():
+                    subprocess.run(["tmux", "select-window", "-t", session_name])
+                    print(f"{GREEN}✓ Switched to existing tmux window '{session_name}'.{RESET}")
+                    return
+
+                subprocess.Popen(["tmux", "new-window", "-n", session_name, "-c", ws, cmd_str])
+                print(f"{GREEN}✓ Opened session in new tmux window '{session_name}'.{RESET}")
+            except Exception as ex:
+                print(f"{RED}Error opening tmux window: {ex}{RESET}", file=sys.stderr)
+            return
+
+        # CASE 2: Inside active zellij
+        if mux_name == "zellij" and mux_status == "active":
+            zellij_cmd = ["zellij", "action", "new-tab", "--name", session_name, "--cwd", ws, "--"] + agy_cmd
+            if dry_run:
+                print(f"{BOLD}[DRY-RUN]{RESET} Multiplexer Status : Active zellij session")
+                print(f"{BOLD}[DRY-RUN]{RESET} Command            : {' '.join(zellij_cmd)}")
+                return
+            try:
+                subprocess.Popen(zellij_cmd)
+                print(f"{GREEN}✓ Opened session in new zellij tab '{session_name}'.{RESET}")
+            except Exception as ex:
+                print(f"{RED}Error opening zellij tab: {ex}{RESET}", file=sys.stderr)
+            return
+
+        # CASE 3: Inside active screen
+        if mux_name == "screen" and mux_status == "active":
+            screen_cmd = ["screen", "-t", session_name] + agy_cmd
+            if dry_run:
+                print(f"{BOLD}[DRY-RUN]{RESET} Multiplexer Status : Active screen session")
+                print(f"{BOLD}[DRY-RUN]{RESET} Command            : {' '.join(screen_cmd)}")
+                return
+            try:
+                subprocess.Popen(screen_cmd, cwd=ws)
+                print(f"{GREEN}✓ Opened session in new screen window '{session_name}'.{RESET}")
+            except Exception as ex:
+                print(f"{RED}Error opening screen window: {ex}{RESET}", file=sys.stderr)
+            return
+
+        # CASE 4: Multiplexer installed on system (outside active multiplexer)
+        if mux_name == "tmux":
+            cmd_str = " ".join([f"'{c}'" if " " in c else c for c in agy_cmd])
+            tmux_full = [mux_bin, "new-session", "-A", "-s", session_name, "-c", ws, cmd_str]
+
+            if dry_run:
+                print(f"{BOLD}[DRY-RUN]{RESET} Multiplexer Status : Installed binary ({mux_bin})")
+                print(f"{BOLD}[DRY-RUN]{RESET} Session Name       : {session_name}")
+                print(f"{BOLD}[DRY-RUN]{RESET} Target Command     : {' '.join(tmux_full)}")
+                if force_new_window:
+                    print(f"{BOLD}[DRY-RUN]{RESET} Window Mode        : New terminal running tmux")
+                return
+
+            if force_new_window:
+                app_id = f"org.omarchy.{session_name}"
+                if Launcher.launch_in_new_window(tmux_full, app_id=app_id, cwd=ws):
+                    print(f"{GREEN}✓ Launched tmux session '{session_name}' in new terminal window.{RESET}")
+                    return
+
+            print(f"\n{BOLD}{CYAN}▶ Launching tmux session '{session_name}'...{RESET}")
+            os.chdir(ws)
+            os.execvp(tmux_full[0], tmux_full)
+
+        elif mux_name == "zellij":
+            zellij_full = [mux_bin, "--session", session_name, "options", "--default-cwd", ws, "--"] + agy_cmd
+            if dry_run:
+                print(f"{BOLD}[DRY-RUN]{RESET} Multiplexer Status : Installed binary ({mux_bin})")
+                print(f"{BOLD}[DRY-RUN]{RESET} Command            : {' '.join(zellij_full)}")
+                return
+            if force_new_window:
+                app_id = f"org.omarchy.{session_name}"
+                if Launcher.launch_in_new_window(zellij_full, app_id=app_id, cwd=ws):
+                    print(f"{GREEN}✓ Launched zellij session '{session_name}' in new terminal window.{RESET}")
+                    return
+            print(f"\n{BOLD}{CYAN}▶ Launching zellij session '{session_name}'...{RESET}")
+            os.chdir(ws)
+            os.execvp(zellij_full[0], zellij_full)
+
+        elif mux_name == "screen":
+            screen_full = [mux_bin, "-S", session_name] + agy_cmd
+            if dry_run:
+                print(f"{BOLD}[DRY-RUN]{RESET} Multiplexer Status : Installed binary ({mux_bin})")
+                print(f"{BOLD}[DRY-RUN]{RESET} Command            : {' '.join(screen_full)}")
+                return
+            if force_new_window:
+                app_id = f"org.omarchy.{session_name}"
+                if Launcher.launch_in_new_window(screen_full, app_id=app_id, cwd=ws):
+                    print(f"{GREEN}✓ Launched screen session '{session_name}' in new terminal window.{RESET}")
+                    return
+            print(f"\n{BOLD}{CYAN}▶ Launching screen session '{session_name}'...{RESET}")
+            os.chdir(ws)
+            os.execvp(screen_full[0], screen_full)
 
 
 class InteractivePicker:
@@ -896,7 +1101,7 @@ class InteractivePicker:
             ws_tag = f"[Workspace: {current_dir.name}]" if filter_cwd else "[All Workspaces]"
 
             header = (
-                f"ENTER: Action Menu  │  ^U: Unsafe  │  ^S: Safe  │  ^B: Sandbox\n"
+                f"ENTER: Action Menu  │  ^U: Unsafe  │  ^S: Safe  │  ^B: Sandbox  │  ^X: Mux\n"
                 f"   ^W: Toggle Scope ({ws_tag})  │  ^R: Rename  │  ^T: Details  │  ^D: Delete  │  ESC: Exit"
             )
 
@@ -908,7 +1113,7 @@ class InteractivePicker:
                 "--header=" + header,
                 "--preview=" + preview_cmd,
                 "--preview-window=right:55%:wrap",
-                "--expect=ctrl-u,ctrl-s,ctrl-b,ctrl-t,ctrl-k,ctrl-d,ctrl-w,ctrl-r",
+                "--expect=ctrl-u,ctrl-s,ctrl-b,ctrl-t,ctrl-k,ctrl-d,ctrl-w,ctrl-r,ctrl-x",
                 "--layout=reverse",
                 "--border=rounded",
                 f"--prompt=agys {ws_tag} > ",
@@ -959,6 +1164,9 @@ class InteractivePicker:
             elif key_pressed == "ctrl-r":
                 InteractivePicker.handle_rename(session, store)
                 continue
+            elif key_pressed == "ctrl-x":
+                MultiplexerManager.launch(session, mode="safe", force_new_window=new_window, base_dir=store.base_dir)
+                break
             elif key_pressed == "ctrl-u":
                 Launcher.launch(session, mode="unsafe", new_window=new_window, base_dir=store.base_dir)
                 break
@@ -996,11 +1204,13 @@ class InteractivePicker:
         fzf_bin = shutil.which("fzf")
 
         choice = ""
+        mux_label = MultiplexerManager.get_menu_label()
         if fzf_bin and sys.stdin.isatty():
             menu_items = [
                 "1. 🛡️  Safe Mode          │ Standard mode with tool execution prompts",
                 "2. ⚡ Unsafe Mode        │ Auto-approve tools (--dangerously-skip-permissions)",
                 "3. 📦 Sandbox Mode       │ Run in isolated terminal sandbox (--sandbox)",
+                mux_label,
                 "4. 📖 View Details       │ Inspect full dialogue transcript & steps",
                 "r. ✏️  Rename Session     │ Edit session title",
                 "e. 📄 Export Markdown    │ Save conversation to clean Markdown file",
@@ -1048,6 +1258,7 @@ class InteractivePicker:
             print(f"  {BOLD}[1]{RESET} 🛡️  {GREEN}Safe Mode{RESET}       - Standard mode with tool execution prompts")
             print(f"  {BOLD}[2]{RESET} ⚡ {YELLOW}Unsafe Mode{RESET}     - Auto-approve tools (--dangerously-skip-permissions)")
             print(f"  {BOLD}[3]{RESET} 📦 {CYAN}Sandbox Mode{RESET}    - Run in isolated terminal sandbox (--sandbox)")
+            print(f"  {BOLD}[m]{RESET} 🪟 {MAGENTA}Multiplexer{RESET}     - Open in tmux/zellij (or new terminal window)")
             print(f"  {BOLD}[4]{RESET} 📖 {BLUE}View Details{RESET}    - Inspect full dialogue transcript & steps")
             print(f"  {BOLD}[r]{RESET} ✏️  {WHITE}Rename Session{RESET}  - Edit session title")
             print(f"  {BOLD}[e]{RESET} 📄 {MAGENTA}Export Markdown{RESET} - Save dialogue to Markdown")
@@ -1058,7 +1269,7 @@ class InteractivePicker:
             print("=" * 65)
 
             try:
-                choice = ask_input(f"{BOLD}Choose option [1/2/3/4/r/e/d/0] (default 1): {RESET}").strip().lower()
+                choice = ask_input(f"{BOLD}Choose option [1/2/3/m/4/r/e/d/0] (default 1): {RESET}").strip().lower()
             except (KeyboardInterrupt, EOFError):
                 return "back"
 
@@ -1070,6 +1281,15 @@ class InteractivePicker:
             return "launched"
         elif choice.startswith("3"):
             Launcher.launch(session, mode="sandbox", new_window=new_window, base_dir=store.base_dir)
+            return "launched"
+        elif choice.startswith("m"):
+            mode_ans = ask_input(f"{BOLD}Execution mode for multiplexer [1: Safe (default) / 2: Unsafe / 3: Sandbox]: {RESET}").strip().lower()
+            mux_mode = "safe"
+            if mode_ans in ("2", "u", "unsafe"):
+                mux_mode = "unsafe"
+            elif mode_ans in ("3", "b", "sandbox"):
+                mux_mode = "sandbox"
+            MultiplexerManager.launch(session, mode=mux_mode, force_new_window=new_window, base_dir=store.base_dir)
             return "launched"
         elif choice.startswith("4"):
             TranscriptViewer.show_full_info(session, store.base_dir)
@@ -1096,7 +1316,7 @@ class InteractivePicker:
         """Prompt user after viewing full transcript. Returns True if launched, False to return."""
         print("\n" + "─" * 65)
         print(f"{BOLD}Finished inspecting: {session.display_title}{RESET}")
-        print(f"  {BOLD}[1/s]{RESET} Resume Safe    {BOLD}[2/u]{RESET} Resume Unsafe    {BOLD}[3/b]{RESET} Sandbox")
+        print(f"  {BOLD}[1/s]{RESET} Safe    {BOLD}[2/u]{RESET} Unsafe    {BOLD}[3/b]{RESET} Sandbox    {BOLD}[m]{RESET} Multiplexer")
         print(f"  {BOLD}[Enter/l]{RESET} Return to session list        {BOLD}[q]{RESET} Quit")
         print("─" * 65)
         try:
@@ -1112,6 +1332,9 @@ class InteractivePicker:
             return True
         elif ans in ("3", "b", "sandbox"):
             Launcher.launch(session, mode="sandbox", new_window=new_window, base_dir=store.base_dir)
+            return True
+        elif ans in ("m", "mux", "tmux"):
+            MultiplexerManager.launch(session, mode="safe", force_new_window=new_window, base_dir=store.base_dir)
             return True
         elif ans in ("q", "quit", "exit"):
             sys.exit(0)
@@ -1252,7 +1475,48 @@ def cmd_resume(store: SessionStore, args: argparse.Namespace) -> None:
         mode = "sandbox"
 
     dry_run = getattr(args, "dry_run", False)
+
+    if getattr(args, "mux", False) or getattr(args, "tmux", False):
+        preferred = "tmux" if getattr(args, "tmux", False) else None
+        MultiplexerManager.launch(
+            session,
+            mode=mode,
+            preferred_mux=preferred,
+            force_new_window=args.window,
+            base_dir=store.base_dir,
+            dry_run=dry_run,
+        )
+        return
+
     Launcher.launch(session, mode=mode, new_window=args.window, base_dir=store.base_dir, dry_run=dry_run)
+
+
+def cmd_mux(store: SessionStore, args: argparse.Namespace) -> None:
+    query = args.query or "1"
+    session = store.get_session(query)
+    if not session:
+        print(f"{RED}Error: Session matching '{query}' not found.{RESET}", file=sys.stderr)
+        sys.exit(1)
+
+    mode = "safe"
+    if args.unsafe:
+        mode = "unsafe"
+    elif args.sandbox:
+        mode = "sandbox"
+
+    preferred = getattr(args, "preferred", None)
+    if getattr(args, "subcommand", "") == "tmux":
+        preferred = "tmux"
+
+    dry_run = getattr(args, "dry_run", False)
+    MultiplexerManager.launch(
+        session,
+        mode=mode,
+        preferred_mux=preferred,
+        force_new_window=args.window,
+        base_dir=store.base_dir,
+        dry_run=dry_run,
+    )
 
 
 def cmd_info(store: SessionStore, args: argparse.Namespace) -> None:
@@ -1383,6 +1647,8 @@ def main() -> None:
     parser.add_argument(
         "-c", "--current-dir", action="store_true", help="Filter sessions to current working directory workspace"
     )
+    parser.add_argument("-m", "--mux", "--multiplexer", action="store_true", help="Open session in terminal multiplexer (or new window)")
+    parser.add_argument("--tmux", action="store_true", help="Open session specifically in tmux")
 
     subparsers = parser.add_subparsers(dest="subcommand", help="Available subcommands")
 
@@ -1400,8 +1666,20 @@ def main() -> None:
     p_resume.add_argument("-u", "--unsafe", action="store_true", help="Launch in unsafe mode (--dangerously-skip-permissions)")
     p_resume.add_argument("-s", "--safe", action="store_true", help="Launch in safe mode with tool prompts (default)")
     p_resume.add_argument("-b", "--sandbox", action="store_true", help="Launch in sandbox mode (--sandbox)")
+    p_resume.add_argument("-m", "--mux", "--multiplexer", action="store_true", help="Open session in terminal multiplexer (or new window)")
+    p_resume.add_argument("--tmux", action="store_true", help="Open session specifically in tmux")
     p_resume.add_argument("-w", "--window", action="store_true", help="Launch in a new terminal window")
     p_resume.add_argument("--dry-run", action="store_true", help="Print command and workspace without executing")
+
+    # mux / tmux
+    p_mux = subparsers.add_parser("mux", aliases=["tmux"], help="Open session in a terminal multiplexer (or new window)")
+    p_mux.add_argument("query", nargs="?", default="1", help="Session index, short ID, or UUID prefix (default: 1)")
+    p_mux.add_argument("-u", "--unsafe", action="store_true", help="Launch in unsafe mode (--dangerously-skip-permissions)")
+    p_mux.add_argument("-s", "--safe", action="store_true", help="Launch in safe mode with tool prompts (default)")
+    p_mux.add_argument("-b", "--sandbox", action="store_true", help="Launch in sandbox mode (--sandbox)")
+    p_mux.add_argument("-w", "--window", action="store_true", help="Launch multiplexer in a new terminal window")
+    p_mux.add_argument("--preferred", choices=["tmux", "zellij", "screen"], help="Preferred multiplexer to use")
+    p_mux.add_argument("--dry-run", action="store_true", help="Print command and workspace without executing")
 
     # search / find
     p_search = subparsers.add_parser("search", aliases=["find"], help="Search transcripts for code, tools, or keywords")
@@ -1446,6 +1724,8 @@ def main() -> None:
         cmd_active(store, args)
     elif args.subcommand in ("resume", "open"):
         cmd_resume(store, args)
+    elif args.subcommand in ("mux", "tmux"):
+        cmd_mux(store, args)
     elif args.subcommand in ("search", "find"):
         cmd_search(store, args)
     elif args.subcommand == "rename":

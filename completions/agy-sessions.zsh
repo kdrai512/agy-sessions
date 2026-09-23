@@ -8,6 +8,8 @@ _agy_sessions() {
         'active:Show currently running sessions and PIDs'
         'resume:Resume a session directly'
         'open:Alias for resume'
+        'mux:Open session in a terminal multiplexer (tmux/zellij/screen)'
+        'tmux:Open session specifically in tmux'
         'search:Search transcripts for code or keywords'
         'find:Alias for search'
         'rename:Rename a conversation session title'
@@ -22,6 +24,8 @@ _agy_sessions() {
     _arguments -C \
         '(-w --window)'{-w,--window}'[Launch in a new Omarchy terminal window]' \
         '(-c --current-dir)'{-c,--current-dir}'[Filter sessions to current workspace directory]' \
+        '(-m --mux --multiplexer)'{-m,--mux,--multiplexer}'[Open in terminal multiplexer]' \
+        '--tmux[Open specifically in tmux]' \
         '(-h --help)'{-h,--help}'[Show help]' \
         '1: :->cmd' \
         '*:: :->args'
@@ -37,7 +41,19 @@ _agy_sessions() {
                         '(-u --unsafe)'{-u,--unsafe}'[Launch in unsafe mode (--dangerously-skip-permissions)]' \
                         '(-s --safe)'{-s,--safe}'[Launch in safe mode]' \
                         '(-b --sandbox)'{-b,--sandbox}'[Launch in sandbox mode]' \
+                        '(-m --mux --multiplexer)'{-m,--mux,--multiplexer}'[Open in terminal multiplexer]' \
+                        '--tmux[Open specifically in tmux]' \
                         '(-w --window)'{-w,--window}'[Launch in a new window]' \
+                        '--dry-run[Print command without executing]' \
+                        '1:Session ID, index, or title:'
+                    ;;
+                mux|tmux)
+                    _arguments \
+                        '(-u --unsafe)'{-u,--unsafe}'[Launch in unsafe mode (--dangerously-skip-permissions)]' \
+                        '(-s --safe)'{-s,--safe}'[Launch in safe mode]' \
+                        '(-b --sandbox)'{-b,--sandbox}'[Launch in sandbox mode]' \
+                        '(-w --window)'{-w,--window}'[Launch multiplexer in a new window]' \
+                        '--preferred[Preferred multiplexer]:multiplexer:(tmux zellij screen)' \
                         '--dry-run[Print command without executing]' \
                         '1:Session ID, index, or title:'
                     ;;

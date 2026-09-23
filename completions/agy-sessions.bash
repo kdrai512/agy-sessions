@@ -4,8 +4,8 @@ _agy_sessions() {
     local cur prev words cword
     _init_completion || return
 
-    local commands="list ls active resume open search find rename export info show preview kill delete rm"
-    local flags="-h --help -w --window -c --current-dir"
+    local commands="list ls active resume open mux tmux search find rename export info show preview kill delete rm"
+    local flags="-h --help -w --window -c --current-dir -m --mux --tmux"
 
     if [[ $cword -eq 1 ]]; then
         COMPREPLY=( $(compgen -W "$commands $flags" -- "$cur") )
@@ -14,8 +14,13 @@ _agy_sessions() {
 
     case "${words[1]}" in
         resume|open)
-            local resume_flags="-u --unsafe -s --safe -b --sandbox -w --window --dry-run"
+            local resume_flags="-u --unsafe -s --safe -b --sandbox -w --window -m --mux --tmux --dry-run"
             COMPREPLY=( $(compgen -W "$resume_flags" -- "$cur") )
+            return 0
+            ;;
+        mux|tmux)
+            local mux_flags="-u --unsafe -s --safe -b --sandbox -w --window --preferred --dry-run"
+            COMPREPLY=( $(compgen -W "$mux_flags" -- "$cur") )
             return 0
             ;;
         list|ls)

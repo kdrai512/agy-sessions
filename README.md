@@ -17,7 +17,7 @@
  │  ⚪  3 │ bfb43505 │ 31m ago  │  28 steps │ Accessing Previous Chat His... │ ~/Work              │
  │  ⚪  4 │ caefa9c3 │ 57m ago  │  85 steps │ Uninstall Codex From Omarchy   │ ~/Work              │
  ╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
-  [ENTER: Action Menu]  [^U: Unsafe]  [^S: Safe]  [^B: Sandbox]  [^W: Workspace]  [^R: Rename]  [^T: Details]
+  [ENTER: Action Menu]  [^U: Unsafe]  [^S: Safe]  [^X: Mux]  [^B: Sandbox]  [^W: Workspace]  [^R: Rename]
 ```
 
 ---
@@ -29,11 +29,12 @@
 3. **Workspace Scoping (`agys -c` / `Ctrl+W`)**: Filter conversations to your current project directory, or toggle dynamically between *Current Workspace* and *All Workspaces* in `fzf`.
 4. **Session Renaming (`agys rename` / `Ctrl+R`)**: Edit auto-generated titles directly in SQLite storage and the interactive TUI.
 5. **Markdown Transcript Export (`agys export`)**: Export any session into clean GitHub-flavored Markdown with collapsible `<details>` blocks for tool executions.
-6. **Execution Mode Flexibility**: Choose whether to run with guarded tool permissions (**Safe Mode**), automated headless execution (**Unsafe Mode** via `--dangerously-skip-permissions`), or isolated container execution (**Sandbox Mode**).
-7. **Live Side-by-Side Preview & Model Badges**: View active model badges (e.g. `🔮 Gemini 3.8 Flash (High)`), conversation dialogue, user prompts, and tool calls before resuming.
-8. **Auto-Workspace Navigation**: Automatically switches working directories to the session's workspace before resuming, ensuring git branches, relative paths, and env vars are aligned.
-9. **Desktop Spotlight Integration**: Integrates with Hyprland and Omarchy (`SUPER + A`) as a centered, floating modal window.
-10. **Zero External Dependencies**: 100% pure Python standard library. No `pip install` required.
+6. **Terminal Multiplexer Integration & Fallback (`agys mux` / `Ctrl+X`)**: Seamlessly resume sessions in an active or new `tmux`, `zellij`, or `screen` session. If no multiplexer is found, automatically falls back to opening in a new terminal window.
+7. **Execution Mode Flexibility**: Choose whether to run with guarded tool permissions (**Safe Mode**), automated headless execution (**Unsafe Mode** via `--dangerously-skip-permissions`), or isolated container execution (**Sandbox Mode**).
+8. **Live Side-by-Side Preview & Model Badges**: View active model badges (e.g. `🔮 Gemini 3.8 Flash (High)`), conversation dialogue, user prompts, and tool calls before resuming.
+9. **Auto-Workspace Navigation**: Automatically switches working directories to the session's workspace before resuming, ensuring git branches, relative paths, and env vars are aligned.
+10. **Desktop Spotlight Integration**: Integrates with Hyprland and Omarchy (`SUPER + A`) as a centered, floating modal window.
+11. **Zero External Dependencies**: 100% pure Python standard library. No `pip install` required.
 
 ---
 
@@ -89,6 +90,7 @@ If [`fzf`](https://github.com/junegunn/fzf) is installed, `agys` launches an int
 | **`Enter`** | Open action submenu (Safe / Unsafe / Sandbox / Details / Rename / Export / Delete) |
 | **`Ctrl + U`** | Directly resume in **⚡ Unsafe Mode** (`--dangerously-skip-permissions`) |
 | **`Ctrl + S`** | Directly resume in **🛡️ Safe Mode** (prompts for tool approvals) |
+| **`Ctrl + X`** | Directly resume in **Terminal Multiplexer** (`tmux` / `zellij` / `screen` or new window fallback) |
 | **`Ctrl + B`** | Directly resume in **📦 Sandbox Mode** (`--sandbox`) |
 | **`Ctrl + W`** | **Toggle Workspace Scope** (switch between current directory and all projects) |
 | **`Ctrl + R`** | **Rename Session Title** (inline edit stored in SQLite) |
@@ -174,11 +176,51 @@ agys resume 2 -b
 # Resume in a new Omarchy/terminal window
 agys resume 2 -w
 
+# Resume in terminal multiplexer (tmux / zellij / screen)
+agys resume 2 -m
+# or specifically:
+agys resume 2 --tmux
+
 # Search by keyword
 agys resume docker -u
 ```
 
-### 6. View Active Sessions & Kill
+### 6. Terminal Multiplexer Integration (`agys mux` / `agys tmux`)
+
+Resume any session inside an existing or new multiplexer session (`tmux`, `zellij`, or GNU `screen`):
+
+```bash
+# Auto-detect multiplexer (active session -> preferred -> installed)
+agys mux 1
+
+# Direct tmux alias
+agys tmux 1
+
+# Open in multiplexer with Unsafe Mode
+agys mux 1 -u
+
+# Open multiplexer in a new terminal window
+agys mux 1 -w
+
+# Prefer a specific multiplexer
+agys mux 1 --preferred zellij
+
+# Preview command without launching
+agys mux 1 --dry-run
+```
+
+#### Smart Detection & Fallback Hierarchy:
+1. **Active Session Detection**:
+   - In **tmux** (`$TMUX`): Jumps to or opens a dedicated window named `agy-<short_id>`.
+   - In **zellij** (`$ZELLIJ`): Opens a new tab named `agy-<short_id>`.
+   - In **screen** (`$STY`): Creates a new window named `agy-<short_id>`.
+2. **Installed Binaries**:
+   - Scans system for `tmux`, `zellij`, and `screen`.
+   - Starts or attaches to session `agy-<short_id>` seamlessly without conflicting duplicates (`tmux new-session -A`).
+3. **Automatic Fallback to New Window**:
+   - If no terminal multiplexer is found on the system, `agys` alerts the user and automatically falls back to opening the conversation in a new terminal window!
+
+### 7. View Active Sessions & Kill
 
 ```bash
 # Show active sessions and holding PIDs
@@ -233,11 +275,15 @@ flowchart TD
         G --> I["Ctrl+R: Inline Rename"]
         G --> J["Ctrl+U: Unsafe Resume"]
         G --> K["Ctrl+S: Safe Resume"]
+        G --> X["Ctrl+X: Multiplexer Resume"]
         G --> L["Enter: Action Menu"]
     end
 
-    subgraph Launch ["Execution"]
+    subgraph Launch ["Execution Paths"]
         J & K --> M["cd Workspace"] --> N["exec agy --conversation <id>"]
+        X --> O{"Multiplexer Detected?"}
+        O -- "tmux / zellij / screen" --> P["Attach / New Window in Multiplexer"]
+        O -- "None" --> Q["Fallback: New Terminal Window"]
     end
 ```
 

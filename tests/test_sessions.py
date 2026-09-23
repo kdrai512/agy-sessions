@@ -159,6 +159,72 @@ class TestSessionManager(unittest.TestCase):
             self.assertIsInstance(role, str)
             self.assertIsInstance(snippet, str)
 
+    def test_multiplexer_detection_system(self):
+        name, status, path = cli.MultiplexerManager.detect()
+        # tmux is installed on this machine
+        if shutil.which("tmux"):
+            self.assertIn(name, ["tmux", "zellij", "screen"])
+            self.assertIn(status, ["active", "installed"])
+            self.assertIsNotNone(path)
+
+    def test_multiplexer_detection_active_env(self):
+        old_env = os.environ.copy()
+        try:
+            # 1. TMUX active
+            os.environ["TMUX"] = "/tmp/tmux-1000/default,1234,0"
+            os.environ.pop("ZELLIJ", None)
+            os.environ.pop("STY", None)
+            name, status, _ = cli.MultiplexerManager.detect()
+            self.assertEqual(name, "tmux")
+            self.assertEqual(status, "active")
+
+            # 2. ZELLIJ active
+            os.environ.pop("TMUX", None)
+            os.environ["ZELLIJ"] = "0"
+            name, status, _ = cli.MultiplexerManager.detect()
+            self.assertEqual(name, "zellij")
+            self.assertEqual(status, "active")
+
+            # 3. SCREEN active
+            os.environ.pop("ZELLIJ", None)
+            os.environ["STY"] = "1234.pts-0.host"
+            name, status, _ = cli.MultiplexerManager.detect()
+            self.assertEqual(name, "screen")
+            self.assertEqual(status, "active")
+        finally:
+            os.environ.clear()
+            os.environ.update(old_env)
+
+    def test_multiplexer_fallback_when_none(self):
+        real_which = shutil.which
+        try:
+            shutil.which = lambda name: None
+            old_env = os.environ.copy()
+            for k in ["TMUX", "ZELLIJ", "ZELLIJ_SESSION_NAME", "STY"]:
+                os.environ.pop(k, None)
+
+            name, status, path = cli.MultiplexerManager.detect()
+            self.assertIsNone(name)
+            self.assertEqual(status, "none")
+            self.assertIsNone(path)
+
+            label = cli.MultiplexerManager.get_menu_label()
+            self.assertIn("New Terminal Window", label)
+        finally:
+            shutil.which = real_which
+            os.environ.clear()
+            os.environ.update(old_env)
+
+    def test_multiplexer_launch_dry_run(self):
+        sessions = self.store.list_sessions()
+        if not sessions:
+            self.skipTest("No sessions available for multiplexer launch test")
+        s = sessions[0]
+        # Should not raise exception
+        cli.MultiplexerManager.launch(s, mode="safe", dry_run=True)
+        cli.MultiplexerManager.launch(s, mode="unsafe", dry_run=True)
+        cli.MultiplexerManager.launch(s, mode="sandbox", force_new_window=True, dry_run=True)
+
 
 if __name__ == "__main__":
     unittest.main()

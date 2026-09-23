@@ -1,0 +1,3 @@
+#!/bin/bash
+# agys-tmux: Launch Antigravity Sessions manager directly in tmux mode
+exec agy-sessions --tmux "$@"

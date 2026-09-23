@@ -1,5 +1,6 @@
 """Unit tests for agy-sessions."""
 
+import argparse
 import os
 import shutil
 import sqlite3
@@ -225,6 +226,27 @@ class TestSessionManager(unittest.TestCase):
         cli.MultiplexerManager.launch(s, mode="unsafe", dry_run=True)
         cli.MultiplexerManager.launch(s, mode="sandbox", force_new_window=True, dry_run=True)
 
+    def test_cmd_mux_interactive_invocation(self):
+        run_called = []
+        original_run = cli.InteractivePicker.run
+        try:
+            def mock_run(store, new_window=False, initial_filter_cwd=False, default_mux=False, preferred_mux=None):
+                run_called.append({
+                    "new_window": new_window,
+                    "default_mux": default_mux,
+                    "preferred_mux": preferred_mux,
+                })
+
+            cli.InteractivePicker.run = mock_run
+            args = argparse.Namespace(query=None, window=False, preferred="tmux", subcommand="mux", unsafe=False, sandbox=False)
+            cli.cmd_mux(self.store, args)
+            self.assertEqual(len(run_called), 1)
+            self.assertTrue(run_called[0]["default_mux"])
+            self.assertEqual(run_called[0]["preferred_mux"], "tmux")
+        finally:
+            cli.InteractivePicker.run = original_run
+
 
 if __name__ == "__main__":
     unittest.main()
+

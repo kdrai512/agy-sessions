@@ -234,16 +234,24 @@ agys kill 1
 
 ## 🖥️ Hyprland Desktop Integration (Spotlight Window)
 
-To bind `agys` to `SUPER + A` as a centered, floating spotlight window (Raycast-style):
+Bind `agys` to centered, floating spotlight windows (Raycast-style):
+- **`SUPER + A`**: Open general `agys` session manager (Action Menu / Safe / Unsafe / Details)
+- **`SUPER + ALT + A`**: Open `agys` directly in **tmux mode** (selecting any conversation resumes immediately in tmux)
 
-1. Add the keybinding in `~/.config/hypr/bindings.lua`:
+1. Add keybindings in `~/.config/hypr/bindings.lua`:
    ```lua
    o.bind("SUPER + A", "Antigravity Sessions", { tui = "agys" })
+   o.bind("SUPER + ALT + A", "Antigravity Sessions (tmux)", { tui = "agys-tmux" })
    ```
 
-2. Add the window rule in `~/.config/hypr/hyprland.lua`:
+2. Add the window rules in `~/.config/hypr/hyprland.lua`:
    ```lua
    o.window("org.omarchy.agys", {
+     float = true,
+     center = true,
+     size = { 1150, 680 },
+   })
+   o.window("org.omarchy.agys-tmux", {
      float = true,
      center = true,
      size = { 1150, 680 },

@@ -1055,14 +1055,20 @@ class InteractivePicker:
     """fzf-based interactive picker with live transcript preview and mode menu."""
 
     @staticmethod
-    def run(store: SessionStore, new_window: bool = False, initial_filter_cwd: bool = False) -> None:
+    def run(
+        store: SessionStore,
+        new_window: bool = False,
+        initial_filter_cwd: bool = False,
+        default_mux: bool = False,
+        preferred_mux: Optional[str] = None,
+    ) -> None:
         if not sys.stdin.isatty():
             cmd_list(store, argparse.Namespace(limit=25, current_dir=initial_filter_cwd))
             return
 
         fzf_bin = shutil.which("fzf")
         if not fzf_bin:
-            InteractivePicker.fallback_menu(store, new_window=new_window)
+            InteractivePicker.fallback_menu(store, new_window=new_window, default_mux=default_mux, preferred_mux=preferred_mux)
             return
 
         filter_cwd = initial_filter_cwd
@@ -1100,10 +1106,19 @@ class InteractivePicker:
             preview_cmd = f"'{sys_executable()}' '{self_script}' preview {{2}}"
             ws_tag = f"[Workspace: {current_dir.name}]" if filter_cwd else "[All Workspaces]"
 
-            header = (
-                f"ENTER: Action Menu  │  ^U: Unsafe  │  ^S: Safe  │  ^B: Sandbox  │  ^X: Mux\n"
-                f"   ^W: Toggle Scope ({ws_tag})  │  ^R: Rename  │  ^T: Details  │  ^D: Delete  │  ESC: Exit"
-            )
+            mux_name = (preferred_mux or "tmux").upper() if preferred_mux else "TMUX"
+            if default_mux:
+                header = (
+                    f"ENTER: Resume in {mux_name}  │  ^U: Unsafe ({mux_name})  │  ^A: Action Menu  │  ^S: Safe  │  ^B: Sandbox\n"
+                    f"   ^W: Toggle Scope ({ws_tag})  │  ^R: Rename  │  ^T: Details  │  ^D: Delete  │  ESC: Exit"
+                )
+                prompt_tag = f"agys ({preferred_mux or 'tmux'}) {ws_tag} > "
+            else:
+                header = (
+                    f"ENTER: Action Menu  │  ^U: Unsafe  │  ^S: Safe  │  ^B: Sandbox  │  ^X: Mux\n"
+                    f"   ^W: Toggle Scope ({ws_tag})  │  ^R: Rename  │  ^T: Details  │  ^D: Delete  │  ESC: Exit"
+                )
+                prompt_tag = f"agys {ws_tag} > "
 
             fzf_args = [
                 fzf_bin,
@@ -1113,10 +1128,10 @@ class InteractivePicker:
                 "--header=" + header,
                 "--preview=" + preview_cmd,
                 "--preview-window=right:55%:wrap",
-                "--expect=ctrl-u,ctrl-s,ctrl-b,ctrl-t,ctrl-k,ctrl-d,ctrl-w,ctrl-r,ctrl-x",
+                "--expect=ctrl-u,ctrl-s,ctrl-b,ctrl-t,ctrl-k,ctrl-d,ctrl-w,ctrl-r,ctrl-x,ctrl-a",
                 "--layout=reverse",
                 "--border=rounded",
-                f"--prompt=agys {ws_tag} > ",
+                f"--prompt={prompt_tag}",
             ]
 
             try:
@@ -1164,11 +1179,19 @@ class InteractivePicker:
             elif key_pressed == "ctrl-r":
                 InteractivePicker.handle_rename(session, store)
                 continue
+            elif key_pressed == "ctrl-a":
+                action_result = InteractivePicker.action_menu(session, store, new_window=new_window)
+                if action_result in ("back", "refresh"):
+                    continue
+                break
             elif key_pressed == "ctrl-x":
-                MultiplexerManager.launch(session, mode="safe", force_new_window=new_window, base_dir=store.base_dir)
+                MultiplexerManager.launch(session, mode="safe", preferred_mux=preferred_mux, force_new_window=new_window, base_dir=store.base_dir)
                 break
             elif key_pressed == "ctrl-u":
-                Launcher.launch(session, mode="unsafe", new_window=new_window, base_dir=store.base_dir)
+                if default_mux:
+                    MultiplexerManager.launch(session, mode="unsafe", preferred_mux=preferred_mux, force_new_window=new_window, base_dir=store.base_dir)
+                else:
+                    Launcher.launch(session, mode="unsafe", new_window=new_window, base_dir=store.base_dir)
                 break
             elif key_pressed == "ctrl-s":
                 Launcher.launch(session, mode="safe", new_window=new_window, base_dir=store.base_dir)
@@ -1188,11 +1211,15 @@ class InteractivePicker:
                 InteractivePicker.handle_delete(session, store)
                 continue
             else:
-                # Enter was pressed: Open action menu
-                action_result = InteractivePicker.action_menu(session, store, new_window=new_window)
-                if action_result in ("back", "refresh"):
-                    continue
-                break
+                if default_mux:
+                    MultiplexerManager.launch(session, mode="safe", preferred_mux=preferred_mux, force_new_window=new_window, base_dir=store.base_dir)
+                    break
+                else:
+                    # Enter was pressed: Open action menu
+                    action_result = InteractivePicker.action_menu(session, store, new_window=new_window)
+                    if action_result in ("back", "refresh"):
+                        continue
+                    break
 
     @staticmethod
     def action_menu(session: Session, store: SessionStore, new_window: bool = False) -> str:
@@ -1400,7 +1427,12 @@ class InteractivePicker:
         time.sleep(0.5)
 
     @staticmethod
-    def fallback_menu(store: SessionStore, new_window: bool = False) -> None:
+    def fallback_menu(
+        store: SessionStore,
+        new_window: bool = False,
+        default_mux: bool = False,
+        preferred_mux: Optional[str] = None,
+    ) -> None:
         """Terminal menu used when fzf is not available."""
         sessions = store.list_sessions()
         print(f"\n{BOLD}{CYAN}Antigravity Sessions ({len(sessions)} total):{RESET}\n")
@@ -1422,7 +1454,10 @@ class InteractivePicker:
             print(f"{RED}Invalid selection.{RESET}")
             sys.exit(1)
 
-        InteractivePicker.action_menu(session, store, new_window=new_window)
+        if default_mux:
+            MultiplexerManager.launch(session, mode="safe", preferred_mux=preferred_mux, force_new_window=new_window, base_dir=store.base_dir)
+        else:
+            InteractivePicker.action_menu(session, store, new_window=new_window)
 
 
 def cmd_list(store: SessionStore, args: argparse.Namespace) -> None:
@@ -1492,7 +1527,21 @@ def cmd_resume(store: SessionStore, args: argparse.Namespace) -> None:
 
 
 def cmd_mux(store: SessionStore, args: argparse.Namespace) -> None:
-    query = args.query or "1"
+    preferred = getattr(args, "preferred", None)
+    if getattr(args, "subcommand", "") == "tmux":
+        preferred = "tmux"
+
+    query = getattr(args, "query", None)
+    if not query:
+        InteractivePicker.run(
+            store,
+            new_window=args.window,
+            initial_filter_cwd=False,
+            default_mux=True,
+            preferred_mux=preferred,
+        )
+        return
+
     session = store.get_session(query)
     if not session:
         print(f"{RED}Error: Session matching '{query}' not found.{RESET}", file=sys.stderr)
@@ -1503,10 +1552,6 @@ def cmd_mux(store: SessionStore, args: argparse.Namespace) -> None:
         mode = "unsafe"
     elif args.sandbox:
         mode = "sandbox"
-
-    preferred = getattr(args, "preferred", None)
-    if getattr(args, "subcommand", "") == "tmux":
-        preferred = "tmux"
 
     dry_run = getattr(args, "dry_run", False)
     MultiplexerManager.launch(
@@ -1673,7 +1718,7 @@ def main() -> None:
 
     # mux / tmux
     p_mux = subparsers.add_parser("mux", aliases=["tmux"], help="Open session in a terminal multiplexer (or new window)")
-    p_mux.add_argument("query", nargs="?", default="1", help="Session index, short ID, or UUID prefix (default: 1)")
+    p_mux.add_argument("query", nargs="?", default=None, help="Session index, short ID, or UUID prefix (default: interactive picker)")
     p_mux.add_argument("-u", "--unsafe", action="store_true", help="Launch in unsafe mode (--dangerously-skip-permissions)")
     p_mux.add_argument("-s", "--safe", action="store_true", help="Launch in safe mode with tool prompts (default)")
     p_mux.add_argument("-b", "--sandbox", action="store_true", help="Launch in sandbox mode (--sandbox)")
@@ -1742,7 +1787,15 @@ def main() -> None:
         cmd_delete(store, args)
     else:
         # Default: Interactive Picker
-        InteractivePicker.run(store, new_window=args.window, initial_filter_cwd=args.current_dir)
+        use_mux = args.mux or args.tmux
+        pref = "tmux" if args.tmux else None
+        InteractivePicker.run(
+            store,
+            new_window=args.window,
+            initial_filter_cwd=args.current_dir,
+            default_mux=use_mux,
+            preferred_mux=pref,
+        )
 
 
 if __name__ == "__main__":
